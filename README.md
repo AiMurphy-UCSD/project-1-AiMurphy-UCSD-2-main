@@ -28,7 +28,7 @@ sizing, and congestion control.
 
 | Field | Value |
 |-------|-------|
-| **Name** | **AiMurphy**|
+| **Name** | **Aidan Murphy**|
 | **PID**  | **A18483865**|
 
 ---
