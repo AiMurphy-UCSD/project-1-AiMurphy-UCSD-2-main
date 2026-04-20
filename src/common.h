@@ -166,6 +166,9 @@ struct Host_t {
     char** recv_message_buffer;
     uint16_t* recv_message_offset;
     uint16_t* recv_message_capacity;
+
+    Frame*** recv_window;
+    uint8_t** recv_window_present;
 };
 typedef struct Host_t Host;
 /*

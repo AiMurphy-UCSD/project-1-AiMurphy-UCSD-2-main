@@ -38,6 +38,20 @@ void init_host(Host* host, int id) {
     host->recv_message_capacity = calloc(glb_num_hosts, sizeof(uint16_t));
     assert(host->recv_message_capacity);
 
+    host->recv_window = calloc(glb_num_hosts, sizeof(Frame**));
+    assert(host->recv_window);
+
+    host->recv_window_present = calloc(glb_num_hosts, sizeof(uint8_t*));
+    assert(host->recv_window_present);
+
+    for (int i = 0; i < glb_num_hosts; i++) {
+        host->recv_window[i] = calloc(glb_sysconfig.window_size, sizeof(Frame*));
+        assert(host->recv_window[i]);
+
+        host->recv_window_present[i] = calloc(glb_sysconfig.window_size, sizeof(uint8_t));
+        assert(host->recv_window_present[i]);
+    }
+
     for (int i = 0; i < glb_num_hosts; i++) {
         host->recv_message_capacity[i] = 0;
     }
@@ -47,6 +61,7 @@ void init_host(Host* host, int id) {
         host->recv_message_buffer[i] = NULL;
         host->recv_message_offset[i] = 0;
     }
+
 
     // *********** PA1b ONLY ***********
     host->cc = calloc(glb_num_hosts, sizeof(CongestionControl));
