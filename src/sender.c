@@ -62,6 +62,8 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
         uint8_t ack_seq = ack_frame->seq_num;
         num_acks_received[ack_sender]++;
 
+        int marked_any = 0;
+
         for (int i = 0; i < glb_sysconfig.window_size; i++) {
             Frame* win_frame = host->send_window[i].frame;
             if (win_frame == NULL) {
@@ -70,26 +72,27 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
 
             if (win_frame->dst_id == ack_sender &&
                 win_frame->src_id == host->id &&
-                win_frame->seq_num == ack_seq) {
+                seq_num_diff(win_frame->seq_num, ack_seq) >= 0) {
 
-                if (host->send_window[i].acked == 1) {
-                    num_dup_acks_for_this_rtt[ack_sender]++;
-                } else {
+                if (host->send_window[i].acked == 0) {
                     host->send_window[i].acked = 1;
+                    marked_any = 1;
                     if (host->send_window[i].timeout != NULL) {
                         free(host->send_window[i].timeout);
                         host->send_window[i].timeout = NULL;
                     }
                 }
-                break;
             }
+        }
+
+        if (!marked_any) {
+            num_dup_acks_for_this_rtt[ack_sender]++;
         }
 
         free(ack_frame);
         free(ll_inmsg_node);
     }
 
-    /* Slide sender window only from the front */
     while (host->send_window[0].frame != NULL && host->send_window[0].acked == 1) {
         free(host->send_window[0].frame);
 

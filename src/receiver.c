@@ -89,7 +89,7 @@ void handle_incoming_frames(Host* host) {
             }
         }
 
-        /* Selective ACK: ACK the received frame's sequence number */
+        /* CUMULATIVE ACK: highest contiguous in-order frame */
         Frame* ack_frame = malloc(sizeof(Frame));
         assert(ack_frame != NULL);
         memset(ack_frame, 0, sizeof(Frame));
@@ -97,7 +97,8 @@ void handle_incoming_frames(Host* host) {
         ack_frame->src_id = host->id;
         ack_frame->dst_id = sender_id;
         ack_frame->remaining_msg_bytes = 0;
-        ack_frame->seq_num = inframe->seq_num;
+        ack_frame->seq_num =
+            (uint8_t)((host->expected_seq_num[sender_id] + MAX_SEQ_NUM) % (MAX_SEQ_NUM + 1));
 
         ack_frame->crc_8 = 0;
         char* ack_char = convert_frame_to_char(ack_frame);
