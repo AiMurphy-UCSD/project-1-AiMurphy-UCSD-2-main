@@ -120,7 +120,8 @@ typedef struct Frame_t Frame;
 struct send_window_slot {
     Frame* frame;
     struct timeval* timeout;
-}; 
+    uint8_t acked;
+};
 
 // PA1b ONLY
 struct CongestionControl_t {

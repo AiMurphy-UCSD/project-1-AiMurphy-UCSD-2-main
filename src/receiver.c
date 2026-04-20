@@ -24,8 +24,6 @@ void handle_incoming_frames(Host* host) {
 
         uint8_t expected = host->expected_seq_num[sender_id];
         int diff = seq_num_diff(expected, inframe->seq_num);
-
-        /* Frame is within receive window iff 0 <= diff < window_size */
         int in_window = (diff >= 0 && diff < glb_sysconfig.window_size);
 
         if (in_window) {
@@ -40,7 +38,6 @@ void handle_incoming_frames(Host* host) {
                 host->recv_window_present[sender_id][slot] = 1;
             }
 
-            /* Deliver all newly contiguous frames from window front */
             while (host->recv_window_present[sender_id][0]) {
                 Frame* deliver = host->recv_window[sender_id][0];
                 int payload_len;
@@ -79,7 +76,6 @@ void handle_incoming_frames(Host* host) {
 
                 free(deliver);
 
-                /* Shift receive window left by one */
                 for (int j = 0; j < glb_sysconfig.window_size - 1; j++) {
                     host->recv_window[sender_id][j] = host->recv_window[sender_id][j + 1];
                     host->recv_window_present[sender_id][j] =
@@ -93,7 +89,7 @@ void handle_incoming_frames(Host* host) {
             }
         }
 
-        /* Send cumulative ACK for highest contiguous in-order frame */
+        /* Selective ACK: ACK the received frame's sequence number */
         Frame* ack_frame = malloc(sizeof(Frame));
         assert(ack_frame != NULL);
         memset(ack_frame, 0, sizeof(Frame));
@@ -101,9 +97,7 @@ void handle_incoming_frames(Host* host) {
         ack_frame->src_id = host->id;
         ack_frame->dst_id = sender_id;
         ack_frame->remaining_msg_bytes = 0;
-
-        ack_frame->seq_num =
-            (uint8_t)((host->expected_seq_num[sender_id] + MAX_SEQ_NUM) % (MAX_SEQ_NUM + 1));
+        ack_frame->seq_num = inframe->seq_num;
 
         ack_frame->crc_8 = 0;
         char* ack_char = convert_frame_to_char(ack_frame);
