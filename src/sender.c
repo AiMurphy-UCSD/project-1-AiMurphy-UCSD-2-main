@@ -54,21 +54,8 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
             uint8_t receiver_id = frame->src_id;
             uint8_t ack_num     = frame->seq_num;
 
-            /* slide window forward for each newly ACKed frame */
-            int advance = seq_num_diff(host->snd_base[receiver_id], ack_num);
-            int in_flight = seq_num_diff(host->snd_base[receiver_id],
-                                         host->snd_next[receiver_id]);
-
-            /* Ignore duplicate, stale, or impossible ACKs */
-            if (advance <= 0 || advance > in_flight) {
-                free(frame);
-                continue;
-            }
-
-            /* slide window forward for each newly ACKed frame */
-            while (advance > 0) {
+            while (seq_num_diff(host->snd_base[receiver_id], ack_num) > 0) {
                 int slot = host->snd_base[receiver_id] % glb_sysconfig.window_size;
-
                 if (host->send_window[slot].frame != NULL) {
                     free(host->send_window[slot].frame);
                     host->send_window[slot].frame = NULL;
@@ -77,10 +64,8 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
                     free(host->send_window[slot].timeout);
                     host->send_window[slot].timeout = NULL;
                 }
-
                 host->snd_base[receiver_id]++;
                 num_acks_received[receiver_id]++;
-                advance--;
             }
             
             free(frame);
