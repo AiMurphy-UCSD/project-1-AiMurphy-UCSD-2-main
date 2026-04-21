@@ -19,48 +19,24 @@ void init_host(Host* host, int id) {
     for (int i = 0; i < glb_sysconfig.window_size; i++) {
         host->send_window[i].frame = NULL;
         host->send_window[i].timeout = NULL;
-        host->send_window[i].acked = 0;
     }
     host->latest_timeout = malloc(sizeof(struct timeval));
     gettimeofday(host->latest_timeout, NULL);
 
-    // TODO: You should fill in this function as necessary to initialize variables
-    host->next_seq_num = 0;
+    
+    /* Sender state: one entry per destination host */
+    host->snd_base = calloc(glb_num_hosts, sizeof(uint8_t));
+    host->snd_next = calloc(glb_num_hosts, sizeof(uint8_t));
 
-    host->expected_seq_num = calloc(glb_num_hosts, sizeof(uint8_t));
-    assert(host->expected_seq_num);
-
-    host->recv_message_buffer = calloc(glb_num_hosts, sizeof(char*));
-    assert(host->recv_message_buffer);
-
-    host->recv_message_offset = calloc(glb_num_hosts, sizeof(uint16_t));
-    assert(host->recv_message_offset);
-
-    host->recv_message_capacity = calloc(glb_num_hosts, sizeof(uint16_t));
-    assert(host->recv_message_capacity);
-
-    host->recv_window = calloc(glb_num_hosts, sizeof(Frame**));
-    assert(host->recv_window);
-
-    host->recv_window_present = calloc(glb_num_hosts, sizeof(uint8_t*));
-    assert(host->recv_window_present);
-
+    /* Receiver state: one entry per source host */
+    host->rcv_base   = calloc(glb_num_hosts, sizeof(uint8_t));
+    host->rcv_window = calloc(glb_num_hosts, sizeof(Frame **));
+    host->rcv_msg_buf = calloc(glb_num_hosts, sizeof(char *));
+    host->rcv_msg_len = calloc(glb_num_hosts, sizeof(int));
     for (int i = 0; i < glb_num_hosts; i++) {
-        host->recv_window[i] = calloc(glb_sysconfig.window_size, sizeof(Frame*));
-        assert(host->recv_window[i]);
-
-        host->recv_window_present[i] = calloc(glb_sysconfig.window_size, sizeof(uint8_t));
-        assert(host->recv_window_present[i]);
-    }
-
-    for (int i = 0; i < glb_num_hosts; i++) {
-        host->recv_message_capacity[i] = 0;
-    }
-
-    for (int i = 0; i < glb_num_hosts; i++) {
-        host->expected_seq_num[i] = 0;
-        host->recv_message_buffer[i] = NULL;
-        host->recv_message_offset[i] = 0;
+        host->rcv_window[i] = calloc(glb_sysconfig.window_size, sizeof(Frame *));
+        host->rcv_msg_buf[i] = NULL;
+        host->rcv_msg_len[i] = 0;
     }
 
 

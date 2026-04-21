@@ -96,7 +96,7 @@ typedef struct EgressPort_t Egress;
    you want. However, MAX_FRAME_SIZE is fixed (i.e. 64 bytes).
 */
 
-#define FRAME_PAYLOAD_SIZE 58
+#define FRAME_PAYLOAD_SIZE 57
 struct __attribute__((packed)) Frame_t {
     /* DO NOT CHANGE:
         1) remaining_msg_bytes
@@ -106,13 +106,14 @@ struct __attribute__((packed)) Frame_t {
 
         5) data (you can change payload size)
     */   
-    uint16_t remaining_msg_bytes; 
-    uint8_t dst_id; 
-    uint8_t src_id; 
-    uint8_t seq_num; 
+    uint16_t remaining_msg_bytes;
+    uint8_t dst_id;
+    uint8_t src_id;
+    uint8_t seq_num;
 
-    char data[FRAME_PAYLOAD_SIZE]; 
-    uint8_t crc_8;
+    uint8_t frame_type;          /* 0 = data frame, 1 = ACK frame */
+    char data[FRAME_PAYLOAD_SIZE];
+    uint8_t crc8;                /*last field */
 };
 typedef struct Frame_t Frame; 
 
@@ -120,7 +121,6 @@ typedef struct Frame_t Frame;
 struct send_window_slot {
     Frame* frame;
     struct timeval* timeout;
-    uint8_t acked;
 };
 
 // PA1b ONLY
@@ -162,14 +162,17 @@ struct Host_t {
 
     CongestionControl* cc; //PA1b ONLY
 
-    uint8_t next_seq_num;
-    uint8_t* expected_seq_num;
-    char** recv_message_buffer;
-    uint16_t* recv_message_offset;
-    uint16_t* recv_message_capacity;
+    /* Sender state (per destination host) */
+    uint8_t* snd_base;       /* oldest unACKed seq_num for each dst */
+    uint8_t* snd_next;       /* next seq_num to assign for each dst */
 
-    Frame*** recv_window;
-    uint8_t** recv_window_present;
+    
+    /* Receiver state (per source host) */
+    uint8_t*  rcv_base;      /* next expected seq_num from each src */
+    Frame***  rcv_window;    /* buffered out-of-order frames per src */
+    char**    rcv_msg_buf;   /* partial assembled message per src */
+    int*      rcv_msg_len;   /* bytes assembled so far per src */
+
 };
 typedef struct Host_t Host;
 /*
