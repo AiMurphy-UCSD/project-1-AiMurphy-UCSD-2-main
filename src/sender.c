@@ -24,6 +24,7 @@ struct timeval* host_get_next_expiring_timeval(Host* host) {
 }
 
 void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
+    (void) curr_timeval;
 
     uint8_t num_acks_received[glb_num_hosts];
     memset(num_acks_received, 0, glb_num_hosts);
@@ -54,8 +55,22 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
             uint8_t receiver_id = frame->src_id;
             uint8_t ack_num     = frame->seq_num;
 
+            uint8_t base = host->snd_base[receiver_id];
+            uint8_t next = host->snd_next[receiver_id];
+
+            int dist_base_to_ack  = seq_num_diff(base, ack_num);
+            int dist_base_to_next = seq_num_diff(base, next);
+
+            /* ACK must be strictly ahead of base and no further than next */
+            if (dist_base_to_ack <= 0 || dist_base_to_ack > dist_base_to_next) {
+                num_dup_acks_for_this_rtt[receiver_id]++;
+                free(frame);
+                continue;
+            }
+
             while (seq_num_diff(host->snd_base[receiver_id], ack_num) > 0) {
                 int slot = host->snd_base[receiver_id] % glb_sysconfig.window_size;
+
                 if (host->send_window[slot].frame != NULL) {
                     free(host->send_window[slot].frame);
                     host->send_window[slot].frame = NULL;
@@ -64,10 +79,11 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
                     free(host->send_window[slot].timeout);
                     host->send_window[slot].timeout = NULL;
                 }
+
                 host->snd_base[receiver_id]++;
                 num_acks_received[receiver_id]++;
             }
-            
+
             free(frame);
         } else {
             /* not an ACK for us, put it back for the receiver */
