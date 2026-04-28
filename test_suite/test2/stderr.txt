@@ -1,0 +1,7 @@
+Host window size=1
+Messages will be corrupted with probability=0.000000
+Available host id(s):
+   host_id=0
+   host_id=1
+   host_id=2
+The program has been successfully closed.

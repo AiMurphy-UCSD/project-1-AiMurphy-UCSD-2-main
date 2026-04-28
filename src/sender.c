@@ -28,7 +28,7 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
     uint8_t num_acks_received[glb_num_hosts];
     memset(num_acks_received, 0, glb_num_hosts);
 
-    uint8_t num_dup_acks_for_this_rtt[glb_num_hosts];   /* PA1b */
+    uint8_t num_dup_acks_for_this_rtt[glb_num_hosts];   /* PA1b diagnostics */
     memset(num_dup_acks_for_this_rtt, 0, glb_num_hosts);
 
     int n = ll_get_length(host->incoming_frames_head);
@@ -37,7 +37,7 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
         Frame*  frame = (Frame*) node->value;
         free(node);
 
-        /* check CRC, drop if corrupted */
+        /* Check CRC, drop if corrupted. */
         uint8_t saved_crc = frame->crc8;
         frame->crc8 = 0;
         char* buf = convert_frame_to_char(frame);
@@ -54,6 +54,48 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
             uint8_t receiver_id = frame->src_id;
             uint8_t ack_num     = frame->seq_num;
 
+            CongestionControl* cc = &host->cc[receiver_id];
+            int new_acks_for_this_frame = 0;
+
+            /*
+             * PA1b: duplicate ACK handling.
+             * In this PA, snd_base[receiver_id] is the oldest unACKed frame.
+             * If the receiver sends an ACK equal to snd_base, it means the
+             * receiver is still waiting for that frame, so this is a dupACK.
+             */
+            if (ack_num == host->snd_base[receiver_id]) {
+                cc->dup_acks++;
+                num_dup_acks_for_this_rtt[receiver_id]++;
+
+                /*
+                 * Fast Retransmit + Fast Recovery:
+                 * On the 3rd duplicate ACK, immediately mark the missing frame
+                 * for retransmission by clearing its timeout. handle_outgoing_frames
+                 * will retransmit timeout == NULL frames before sending new data.
+                 */
+                if (cc->dup_acks == 3) {
+                    cc->ssthresh = fmax(cc->cwnd / 2.0, 2.0);
+                    cc->cwnd = cc->ssthresh + 3.0;
+                    cc->state = cc_FRFT;
+
+                    int slot = host->snd_base[receiver_id] % glb_sysconfig.window_size;
+                    if (host->send_window[slot].frame != NULL &&
+                        host->send_window[slot].timeout != NULL) {
+                        free(host->send_window[slot].timeout);
+                        host->send_window[slot].timeout = NULL;
+                    }
+                }
+                /* Extra duplicate ACKs during fast recovery inflate cwnd by 1. */
+                else if (cc->state == cc_FRFT) {
+                    cc->cwnd += 1.0;
+                }
+            }
+
+            /*
+             * Slide the send window forward for every newly acknowledged frame.
+             * This is inherited from PA1a, but now we also count how many new
+             * frames were ACKed so we can update congestion control below.
+             */
             while (seq_num_diff(host->snd_base[receiver_id], ack_num) > 0) {
                 int slot = host->snd_base[receiver_id] % glb_sysconfig.window_size;
                 if (host->send_window[slot].frame != NULL) {
@@ -66,11 +108,40 @@ void handle_incoming_acks(Host* host, struct timeval curr_timeval) {
                 }
                 host->snd_base[receiver_id]++;
                 num_acks_received[receiver_id]++;
+                new_acks_for_this_frame++;
             }
-            
+
+            /*
+             * PA1b: congestion window update on NEW ACKs only.
+             * Duplicate ACKs do not run slow start / AIMD.
+             */
+            if (new_acks_for_this_frame > 0) {
+                cc->dup_acks = 0;
+
+                if (cc->state == cc_FRFT) {
+                    /* A new ACK after fast retransmit exits fast recovery. */
+                    cc->cwnd = cc->ssthresh;
+                    cc->state = cc_AIMD;
+                } else if (cc->cwnd <= cc->ssthresh) {
+                    /* Slow Start: increase by 1 MSS per ACK. */
+                    cc->cwnd += (double)new_acks_for_this_frame;
+                    if (cc->cwnd > cc->ssthresh) {
+                        cc->state = cc_AIMD;
+                    } else {
+                        cc->state = cc_SS;
+                    }
+                } else {
+                    /* Congestion Avoidance / AIMD: increase by 1/cwnd per ACK. */
+                    for (int i = 0; i < new_acks_for_this_frame; i++) {
+                        cc->cwnd += (1.0 / cc->cwnd);
+                    }
+                    cc->state = cc_AIMD;
+                }
+            }
+
             free(frame);
         } else {
-            /* not an ACK for us, put it back for the receiver */
+            /* Not an ACK for us, put it back for the receiver. */
             ll_append_node(&host->incoming_frames_head, frame);
         }
     }
@@ -137,10 +208,40 @@ void handle_input_cmds(Host* host, struct timeval curr_timeval) {
 }
 
 void handle_timedout_frames(Host* host, struct timeval curr_timeval) {
+    int saw_timeout[glb_num_hosts];
+    memset(saw_timeout, 0, sizeof(saw_timeout));
+
+    /*
+     * PA1b timeout behavior:
+     * If ANY frame for a destination times out, TCP treats this as congestion.
+     * We update that destination's congestion-control state once, then clear
+     * timeout fields for all outstanding frames to that destination. Clearing
+     * timeout makes handle_outgoing_frames retransmit them before new frames.
+     */
     for (int i = 0; i < glb_sysconfig.window_size; i++) {
-        if (host->send_window[i].frame  != NULL &&
-            host->send_window[i].timeout != NULL) {
-            if (timeval_usecdiff(&curr_timeval, host->send_window[i].timeout) <= 0) {
+        if (host->send_window[i].frame != NULL &&
+            host->send_window[i].timeout != NULL &&
+            timeval_usecdiff(&curr_timeval, host->send_window[i].timeout) <= 0) {
+
+            uint8_t dst = host->send_window[i].frame->dst_id;
+            if (!saw_timeout[dst]) {
+                CongestionControl* cc = &host->cc[dst];
+
+                cc->ssthresh = fmax(cc->cwnd / 2.0, 2.0);
+                cc->cwnd = 1.0;
+                cc->dup_acks = 0;
+                cc->state = cc_SS;
+
+                saw_timeout[dst] = 1;
+            }
+        }
+    }
+
+    /* Clear all timeouts for destinations that had a timeout this RTT. */
+    for (int i = 0; i < glb_sysconfig.window_size; i++) {
+        if (host->send_window[i].frame != NULL) {
+            uint8_t dst = host->send_window[i].frame->dst_id;
+            if (saw_timeout[dst] && host->send_window[i].timeout != NULL) {
                 free(host->send_window[i].timeout);
                 host->send_window[i].timeout = NULL;
             }
@@ -156,10 +257,26 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
         memcpy(&curr_timeval, host->latest_timeout, sizeof(struct timeval));
     }
 
-    /* pass 1: resend anything that timed out */
+    /*
+     * Pass 1: retransmit frames whose timeout was cleared.
+     * PA1b requires these retransmissions to happen here, not directly inside
+     * handle_timedout_frames. We also respect cwnd, so we do not send more
+     * than the congestion window allows in this sender wake-up.
+     */
     for (int i = 0; i < glb_sysconfig.window_size; i++) {
-        if (host->send_window[i].frame  != NULL &&
+        if (host->send_window[i].frame != NULL &&
             host->send_window[i].timeout == NULL) {
+
+            uint8_t dst = host->send_window[i].frame->dst_id;
+            int in_flight = seq_num_diff(host->snd_base[dst], host->snd_next[dst]);
+            if (in_flight < 0) { in_flight = 0; }
+
+            int cwnd_limit = (int)floor(host->cc[dst].cwnd);
+            if (cwnd_limit < 1) { cwnd_limit = 1; }
+
+            if (in_flight >= cwnd_limit) {
+                continue;
+            }
 
             Frame* copy = malloc(sizeof(Frame));
             assert(copy);
@@ -174,14 +291,22 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
         }
     }
 
-    /* pass 2: send new frames as long as the window isn't full */
+    /*
+     * Pass 2: send new frames while allowed by BOTH:
+     *   1) the fixed send window size from PA1a, and
+     *   2) the PA1b congestion window cwnd.
+     */
     while (ll_get_length(host->buffered_outframes_head) > 0) {
         Frame* peek = (Frame*) ll_peek_node(host->buffered_outframes_head);
         uint8_t dst = peek->dst_id;
 
         int in_flight = seq_num_diff(host->snd_base[dst], host->snd_next[dst]);
         if (in_flight < 0) { in_flight = 0; }
-        if (in_flight >= glb_sysconfig.window_size) {
+
+        int cwnd_limit = (int)floor(host->cc[dst].cwnd);
+        if (cwnd_limit < 1) { cwnd_limit = 1; }
+
+        if (in_flight >= glb_sysconfig.window_size || in_flight >= cwnd_limit) {
             break;
         }
 
@@ -189,7 +314,7 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
         Frame*  outgoing_frame   = (Frame*) ll_outframe_node->value;
         free(ll_outframe_node);
 
-        /* assign seq num and compute CRC before sending */
+        /* Assign seq num and compute CRC before sending. */
         outgoing_frame->seq_num = host->snd_next[dst];
         host->snd_next[dst]++;
 
@@ -207,7 +332,7 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
         additional_ts += 10000;
         host->send_window[slot].timeout = next_timeout;
 
-        /* send a copy; keep the original in the window for retransmission */
+        /* Send a copy; keep the original in the window for retransmission. */
         Frame* copy = malloc(sizeof(Frame));
         assert(copy);
         memcpy(copy, outgoing_frame, sizeof(Frame));
