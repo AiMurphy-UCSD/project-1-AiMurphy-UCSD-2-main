@@ -1,0 +1,7 @@
+rtt,acks_received,dup_acks,state,cwnd,ssthresh,frames_sent,frames_dropped,frames_in_sender_window,timedout_frames
+1,0,0,Slow Start,1.000000,16.000000,1,0,1,0
+2,1,0,Slow Start,2.000000,16.000000,2,0,2,0
+3,2,0,Slow Start,4.000000,16.000000,4,1,4,0
+4,3,0,Slow Start,7.000000,16.000000,6,3,7,0
+5,0,3,Fast Recovery & Fast Retransmit,6.500000,3.500000,0,0,7,1
+6,0,0,Slow Start,1.000000,3.250000,0,0,7,7
