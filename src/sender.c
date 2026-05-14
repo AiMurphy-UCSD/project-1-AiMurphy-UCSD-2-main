@@ -257,24 +257,29 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
         memcpy(&curr_timeval, host->latest_timeout, sizeof(struct timeval));
     }
 
-    /*
-     * Pass 1: retransmit frames whose timeout was cleared.
-     * PA1b requires these retransmissions to happen here, not directly inside
-     * handle_timedout_frames. We also respect cwnd, so we do not send more
-     * than the congestion window allows in this sender wake-up.
-     */
+   /* pass 1: retransmit frames whose timeout was cleared */
+    int retrans_sent[glb_num_hosts];
+    memset(retrans_sent, 0, sizeof(retrans_sent));
+
     for (int i = 0; i < glb_sysconfig.window_size; i++) {
         if (host->send_window[i].frame != NULL &&
             host->send_window[i].timeout == NULL) {
 
             uint8_t dst = host->send_window[i].frame->dst_id;
-            int in_flight = seq_num_diff(host->snd_base[dst], host->snd_next[dst]);
-            if (in_flight < 0) { in_flight = 0; }
 
             int cwnd_limit = (int)floor(host->cc[dst].cwnd);
-            if (cwnd_limit < 1) { cwnd_limit = 1; }
+            if (cwnd_limit < 1) {
+                cwnd_limit = 1;
+            }
 
-            if (in_flight >= cwnd_limit) {
+            /*
+            * IMPORTANT:
+            * Do NOT compare in_flight against cwnd here.
+            * These frames are already in the sender window.
+            * After timeout, in_flight may be larger than cwnd,
+            * but we still need to retransmit up to cwnd frames.
+            */
+            if (retrans_sent[dst] >= cwnd_limit) {
                 continue;
             }
 
@@ -286,8 +291,10 @@ void handle_outgoing_frames(Host* host, struct timeval curr_timeval) {
             struct timeval* next_timeout = malloc(sizeof(struct timeval));
             memcpy(next_timeout, &curr_timeval, sizeof(struct timeval));
             timeval_usecplus(next_timeout, TIMEOUT_INTERVAL_USEC + additional_ts);
-            additional_ts += 10000; /* 10 ms gap per frame */
+            additional_ts += 10000;
+
             host->send_window[i].timeout = next_timeout;
+            retrans_sent[dst]++;
         }
     }
 
